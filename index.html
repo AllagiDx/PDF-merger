@@ -1,62 +1,101 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <title>PDF Merger - Modern</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:;">
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <div class="app">
+	<head>
+		<meta charset="utf-8" />
+		<title>PDF Merger & Editor</title>
+		<!-- Updated CSP: removed unsafe-eval for better security -->
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; connect-src 'self' file: blob:;"
+		/>
+		<link rel="stylesheet" href="style.css" />
+	</head>
+	<body>
+		<div class="app">
+			<div id="langToggle" class="lang-toggle">🇯🇵 日本語</div>
 
-    <!-- Language Toggle -->
-    <div id="langToggle" class="lang-toggle">🇯🇵 日本語</div>
+			<header class="topbar">
+				<div class="brand">
+					<div class="logo">📎</div>
+					<div>
+						<h1 id="title">PDF結合ツール</h1>
+						<p class="subtitle" id="subtitle">ローカルで高速結合・編集</p>
+					</div>
+				</div>
+				<div class="controls">
+					<input
+						id="fileElem"
+						type="file"
+						accept=".pdf,.png,.jpg,.jpeg"
+						multiple
+					/>
+					<label class="btn primary" for="fileElem" id="addBtn"
+						>ファイル追加</label
+					>
+					<button class="btn" id="clearBtn">全削除</button>
+					<button class="btn" id="mergeEditBtn">結合して編集</button>
+				</div>
+			</header>
 
-    <header class="topbar" id="header">
-      <div class="brand">
-        <div class="logo">📎</div>
-        <div>
-          <h1 id="title">PDF結合ツール</h1>
-          <p class="subtitle" id="subtitle">ローカルで高速結合</p>
-        </div>
-      </div>
-      <div class="controls">
-        <input id="fileElem" type="file" accept=".pdf,.png,.jpg,.jpeg" multiple />
-        <label class="btn primary" for="fileElem" id="addBtn">ファイル追加</label>
-        <button class="btn" id="clearBtn">全削除</button>
-      </div>
-    </header>
+			<main>
+				<section id="drop-area" class="drop-area">
+					<div class="drop-inner">
+						<div class="drop-icon">⬇️</div>
+						<div class="drop-text" id="dropText">
+							ここにドラッグ＆ドロップ または「ファイル追加」
+						</div>
+					</div>
 
-    <main>
-      <section id="drop-area" class="drop-area">
-        <div class="drop-inner">
-          <div class="drop-icon">⬇️</div>
-          <div class="drop-text" id="dropText">
-            ここにドラッグ＆ドロップ または「ファイル追加」
-          </div>
-        </div>
+					<div id="filesList" class="files-grid"></div>
+				</section>
 
-        <div id="filesList" class="files-grid"></div>
-      </section>
+				<aside class="merge-panel">
+					<div class="summary">
+						<div id="count">0 個のファイル</div>
+						<div id="totalsize">0 KB</div>
+					</div>
+					<button class="btn big" id="mergeBtn">結合する(保存のみ)</button>
+					<div id="status" class="status">
+						すべてPC内で処理(アップロードなし)
+					</div>
+				</aside>
+			</main>
 
-      <aside class="merge-panel">
-        <div class="summary">
-          <div id="count">0 個のファイル</div>
-          <div id="totalsize">0 KB</div>
-        </div>
-        <button class="btn big" id="mergeBtn">結合する</button>
-        <div id="status" class="status">すべてPC内で処理（アップロードなし）</div>
-      </aside>
-    </main>
-
-    <footer class="footer">
-      <small id="footerText">ドラッグで並び替え、×で削除できます。</small>
-      <div class="developer-credit">
+			<footer class="footer">
+				<small id="footerText">ドラッグで並び替え、×で削除できます。</small>
+        <div class="developer-credit">
         <small><strong>Allagi</strong> Original by <strong>Utsav Adhikari</strong> </small>
       </div>
-    </footer>
-  </div>
 
-  <script src="renderer.js"></script>
-</body>
+			</footer>
+		</div>
+
+		<!-- Editor overlay -->
+		<div id="editorOverlay" class="editor-overlay hidden">
+			<div class="editor-topbar">
+				<div class="editor-tools">
+					<button class="tool" data-tool="pointer">Pointer</button>
+					<button class="tool" data-tool="rect">Rect</button>
+					<button class="tool" data-tool="arrow">Arrow</button>
+					<button class="tool" data-tool="pen">Pen</button>
+					<button class="tool" data-tool="text">Text</button>
+					<button class="tool" data-tool="highlight">Highlight</button>
+					<button class="tool" id="undoBtn">Undo</button>
+					<button class="tool" id="redoBtn">Redo</button>
+					<button class="tool" id="doneBtn">Save PDF</button>
+					<button class="tool" id="closeEditor">Close</button>
+				</div>
+				<div class="editor-page-nav">
+					<button id="prevPage">◀</button>
+					<span id="pageLabel">1 / 1</span>
+					<button id="nextPage">▶</button>
+				</div>
+			</div>
+			<div class="editor-body">
+				<div id="pageContainer" class="page-container"></div>
+			</div>
+		</div>
+
+		<script type="module" src="./renderer.js"></script>
+	</body>
 </html>
