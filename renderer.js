@@ -6,6 +6,12 @@ const { pdfjsDistPath, pdfjsWorkerPath, pdfLibPath } = window.libs || {};
 const pdfjsLib = await import(`file://${pdfjsDistPath}`);
 pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${pdfjsWorkerPath}`;
 
+// CMap configuration for proper font rendering (especially CJK fonts)
+const CMAP_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.394/cmaps/';
+const CMAP_PACKED = true;
+
+// Suppress verbose warnings
+pdfjsLib.GlobalWorkerOptions.verbosity = 0;
 // Lazy load pdf-lib only when needed
 let PDFLib = null;
 let pdfLibLoading = false;
@@ -409,7 +415,14 @@ async function validatePdfBytes(bytesLike) {
 
 async function tryRecoverPdfWithPdfJs(uint8arr) {
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: uint8arr, verbosity: 0 });
+    const loadingTask = pdfjsLib.getDocument({
+      data: uint8arr,
+      verbosity: 0,
+      cMapUrl: CMAP_URL,
+      cMapPacked: CMAP_PACKED,
+      useSystemFonts: false,
+      disableFontFace: false
+    });
     const pdf = await loadingTask.promise;
     const pageCount = pdf.numPages;
     if (!pageCount || pageCount < 1) return null;
@@ -589,12 +602,23 @@ mergeEditBtn && mergeEditBtn.addEventListener('click', async () => {
       buffer: f.bytes
     }));
 
-    const res = await window.electronAPI.mergeFiles(toSend);
+   const res = await window.electronAPI.mergeFiles(toSend);
 
-    if (!res.success) throw new Error(res.message || 'merge failed');
+if (!res.success) throw new Error(res.message || 'merge failed');
 
-    const mergedBytes = Uint8Array.from(res.bytes);
-    await openEditor(mergedBytes);
+// Create a proper Uint8Array from the response
+const mergedBytes = new Uint8Array(res.bytes);
+
+// Debug: Check if we have valid PDF data
+console.log('Merged PDF size:', mergedBytes.length);
+console.log('First 4 bytes (should be %PDF):',
+  String.fromCharCode(mergedBytes[0]) +
+  String.fromCharCode(mergedBytes[1]) +
+  String.fromCharCode(mergedBytes[2]) +
+  String.fromCharCode(mergedBytes[3])
+);
+
+await openEditor(mergedBytes);
   } catch (err) {
     console.error('Merge & Edit error:', err);
     statusEl && (statusEl.innerText = 'Error: ' + (err.message || String(err)));
@@ -680,10 +704,25 @@ async function renderPageFromQueue(pdf, pageIndex) {
   }
 }
 
-// ---------------- Editor Functions ----------------
-// ---------------- Editor Functions ----------------
 async function openEditor(pdfBytes) {
-    window.originalPdfBytes = pdfBytes;
+  // Ensure pdfBytes is a Uint8Array and store it properly
+  const uint8Bytes = pdfBytes instanceof Uint8Array ? pdfBytes : new Uint8Array(pdfBytes);
+
+  // Debug: Verify we have valid PDF data
+  console.log('openEditor - PDF size:', uint8Bytes.length);
+  console.log('openEditor - First 4 bytes:',
+    String.fromCharCode(uint8Bytes[0]) +
+    String.fromCharCode(uint8Bytes[1]) +
+    String.fromCharCode(uint8Bytes[2]) +
+    String.fromCharCode(uint8Bytes[3])
+  );
+
+  // Store original PDF bytes for saving later - make a new copy
+  window.originalPdfBytes = new Uint8Array(uint8Bytes);
+
+  // Verify storage
+  console.log('Stored originalPdfBytes size:', window.originalPdfBytes.length);
+
   // Hide merger page, show editor page
   mergerPage.style.display = 'none';
   editorPage.style.display = 'flex';
@@ -699,8 +738,16 @@ async function openEditor(pdfBytes) {
   const L = LANG[currentLang];
   statusEl && (statusEl.innerText = L.loadingPages);
 
-  // Load PDF
-  const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
+  // Load PDF - use the uint8Bytes
+  const loadingTask = pdfjsLib.getDocument({
+    data: uint8Bytes,
+    verbosity: 0,
+    cMapUrl: CMAP_URL,
+    cMapPacked: CMAP_PACKED,
+    standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.394/standard_fonts/',
+    useSystemFonts: false,
+    disableFontFace: false
+  });
   const pdf = await loadingTask.promise;
   loadedPdfDocument = pdf;
   const pageCount = pdf.numPages;
@@ -1162,21 +1209,42 @@ panY = 0;
 currentTool = 'pointer';
 updateToolUI();
 });
-// Save PDF with annotations
 savePdfBtn && savePdfBtn.addEventListener('click', async () => {
   try {
     statusEl && (statusEl.innerText = LANG[currentLang].status_exporting);
 
     await ensurePdfLib();
 
+    // Wait for all pages to finish rendering
     while (pageRenderQueue.length > 0 || isProcessingQueue) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    // Debug: Check stored PDF
+    console.log('Save - originalPdfBytes exists:', !!window.originalPdfBytes);
+    if (window.originalPdfBytes) {
+      console.log('Save - originalPdfBytes size:', window.originalPdfBytes.length);
+      console.log('Save - First 4 bytes:',
+        String.fromCharCode(window.originalPdfBytes[0]) +
+        String.fromCharCode(window.originalPdfBytes[1]) +
+        String.fromCharCode(window.originalPdfBytes[2]) +
+        String.fromCharCode(window.originalPdfBytes[3])
+      );
+    }
+
     const hasAnnotations = editorPages.some(page => page.annotations && page.annotations.length > 0);
 
+    // If no annotations, save original PDF directly (fast path)
     if (!hasAnnotations) {
-      const saveRes = await window.electronAPI.saveBytes('edited.pdf', window.originalPdfBytes);
+      // Ensure we have valid data
+      if (!window.originalPdfBytes || window.originalPdfBytes.length === 0) {
+        throw new Error('Original PDF data is missing');
+      }
+
+      const saveRes = await window.electronAPI.saveBytes(
+        'edited.pdf',
+        Array.from(window.originalPdfBytes)
+      );
       if (saveRes.success) {
         statusEl && (statusEl.innerText = `${LANG[currentLang].saved} ${saveRes.path}`);
       } else {
@@ -1185,141 +1253,161 @@ savePdfBtn && savePdfBtn.addEventListener('click', async () => {
       return;
     }
 
+    // Load original PDF to preserve quality
+    if (!window.originalPdfBytes || window.originalPdfBytes.length === 0) {
+      throw new Error('Original PDF data is missing');
+    }
+
+    console.log('Loading PDF with pdf-lib...');
+    const originalPdf = await PDFLib.PDFDocument.load(window.originalPdfBytes);
+    console.log('PDF loaded successfully, pages:', originalPdf.getPageCount());
+    // Process pages with annotations
+    const pagesToProcess = editorPages
+      .map((page, index) => ({ page, index }))
+      .filter(({ page }) => page.annotations && page.annotations.length > 0);
+
+    // If no pages have annotations, save original
+    if (pagesToProcess.length === 0) {
+      const bytes = await originalPdf.save();
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const saveRes = await window.electronAPI.saveBytes('edited.pdf', Array.from(u8));
+      if (saveRes.success) {
+        statusEl && (statusEl.innerText = `${LANG[currentLang].saved} ${saveRes.path}`);
+      } else {
+        statusEl && (statusEl.innerText = 'Save canceled');
+      }
+      return;
+    }
+
+    // Create new PDF with annotations
     const pdfDoc = await PDFLib.PDFDocument.create();
 
-    // Define A4 dimensions in points
-    const A4_WIDTH = 595.28;
-    const A4_HEIGHT = 841.89;
+    // Copy all pages from original
+    const copiedPages = await pdfDoc.copyPages(originalPdf, originalPdf.getPageIndices());
+    copiedPages.forEach(page => pdfDoc.addPage(page));
 
-    for (let i = 0; i < editorPages.length; i++) {
-      const pageData = editorPages[i];
+    // Now overlay annotations only on pages that have them
+    for (let i = 0; i < pagesToProcess.length; i++) {
+      const { page: pageData, index: pageIndex } = pagesToProcess[i];
 
       if (!pageData.canvas) continue;
 
-      const hasPageAnnotations = pageData.annotations && pageData.annotations.length > 0;
-
-      // Create temp canvas for this page at FULL resolution
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = pageData.canvas.width; // Full resolution, no scaling down
-      tempCanvas.height = pageData.canvas.height;
-      const tempCtx = tempCanvas.getContext('2d', {
-        alpha: false,
-        desynchronized: true,
-        imageSmoothingEnabled: true,
-        imageSmoothingQuality: 'high'
+      // Create canvas ONLY for annotations (transparent background)
+      const annotCanvas = document.createElement('canvas');
+      annotCanvas.width = pageData.canvas.width;
+      annotCanvas.height = pageData.canvas.height;
+      const annotCtx = annotCanvas.getContext('2d', {
+        alpha: true,
+        desynchronized: true
       });
 
-      // Draw the base page
-      tempCtx.drawImage(pageData.canvas, 0, 0, tempCanvas.width, tempCanvas.height);
+      // Draw ONLY annotations (not the page content)
+      for (const annot of pageData.annotations) {
+        if (annot.type === 'rectangle') {
+          annotCtx.strokeStyle = annot.color;
+          annotCtx.lineWidth = 3;
+          annotCtx.beginPath();
+          annotCtx.rect(annot.x, annot.y, annot.width, annot.height);
+          annotCtx.stroke();
+        } else if (annot.type === 'highlight') {
+          annotCtx.fillStyle = annot.color + '40';
+          annotCtx.fillRect(annot.x, annot.y, annot.width, annot.height);
+        } else if (annot.type === 'line') {
+          annotCtx.strokeStyle = annot.color;
+          annotCtx.lineWidth = 3;
+          annotCtx.lineCap = 'round';
+          annotCtx.beginPath();
+          annotCtx.moveTo(annot.x1, annot.y1);
+          annotCtx.lineTo(annot.x2, annot.y2);
+          annotCtx.stroke();
 
-      // Draw annotations if present
-      if (hasPageAnnotations) {
-        for (const annot of pageData.annotations) {
-          if (annot.type === 'rectangle') {
-            tempCtx.strokeStyle = annot.color;
-            tempCtx.lineWidth = 3;
-            tempCtx.beginPath();
-            tempCtx.rect(annot.x, annot.y, annot.width, annot.height);
-            tempCtx.stroke();
-          } else if (annot.type === 'highlight') {
-            tempCtx.fillStyle = annot.color + '40';
-            tempCtx.fillRect(annot.x, annot.y, annot.width, annot.height);
-          } else if (annot.type === 'line') {
-            tempCtx.strokeStyle = annot.color;
-            tempCtx.lineWidth = 3;
-            tempCtx.lineCap = 'round';
-            tempCtx.beginPath();
-            tempCtx.moveTo(annot.x1, annot.y1);
-            tempCtx.lineTo(annot.x2, annot.y2);
-            tempCtx.stroke();
-
-            const headLength = 15;
-            const angle = Math.atan2(annot.y2 - annot.y1, annot.x2 - annot.x1);
-            tempCtx.fillStyle = annot.color;
-            tempCtx.beginPath();
-            tempCtx.moveTo(annot.x2, annot.y2);
-            tempCtx.lineTo(
-              annot.x2 - headLength * Math.cos(angle - Math.PI / 6),
-              annot.y2 - headLength * Math.sin(angle - Math.PI / 6)
-            );
-            tempCtx.lineTo(
-              annot.x2 - headLength * Math.cos(angle + Math.PI / 6),
-              annot.y2 - headLength * Math.sin(angle + Math.PI / 6)
-            );
-            tempCtx.closePath();
-            tempCtx.fill();
-          } else if (annot.type === 'pen') {
-            if (annot.points.length < 2) continue;
-            tempCtx.strokeStyle = annot.color;
-            tempCtx.lineWidth = 3;
-            tempCtx.lineCap = 'round';
-            tempCtx.lineJoin = 'round';
-            tempCtx.beginPath();
-            tempCtx.moveTo(annot.points[0].x, annot.points[0].y);
-            for (let j = 1; j < annot.points.length; j++) {
-              tempCtx.lineTo(annot.points[j].x, annot.points[j].y);
-            }
-            tempCtx.stroke();
-          } else if (annot.type === 'text') {
-            tempCtx.fillStyle = annot.color;
-            tempCtx.font = `${annot.fontSize || 24}px Arial`;
-            tempCtx.fillText(annot.text, annot.x, annot.y);
+          // Draw arrowhead
+          const headLength = 15;
+          const angle = Math.atan2(annot.y2 - annot.y1, annot.x2 - annot.x1);
+          annotCtx.fillStyle = annot.color;
+          annotCtx.beginPath();
+          annotCtx.moveTo(annot.x2, annot.y2);
+          annotCtx.lineTo(
+            annot.x2 - headLength * Math.cos(angle - Math.PI / 6),
+            annot.y2 - headLength * Math.sin(angle - Math.PI / 6)
+          );
+          annotCtx.lineTo(
+            annot.x2 - headLength * Math.cos(angle + Math.PI / 6),
+            annot.y2 - headLength * Math.sin(angle + Math.PI / 6)
+          );
+          annotCtx.closePath();
+          annotCtx.fill();
+        } else if (annot.type === 'pen') {
+          if (annot.points.length < 2) continue;
+          annotCtx.strokeStyle = annot.color;
+          annotCtx.lineWidth = 3;
+          annotCtx.lineCap = 'round';
+          annotCtx.lineJoin = 'round';
+          annotCtx.beginPath();
+          annotCtx.moveTo(annot.points[0].x, annot.points[0].y);
+          for (let j = 1; j < annot.points.length; j++) {
+            annotCtx.lineTo(annot.points[j].x, annot.points[j].y);
           }
+          annotCtx.stroke();
+        } else if (annot.type === 'text') {
+          annotCtx.fillStyle = annot.color;
+          annotCtx.font = `${annot.fontSize || 24}px Arial`;
+          annotCtx.fillText(annot.text, annot.x, annot.y);
         }
       }
 
-      // Convert to high-quality PNG for better clarity
-      const dataUrl = tempCanvas.toDataURL('image/png');
+      // Convert annotations canvas to PNG
+      const dataUrl = annotCanvas.toDataURL('image/png');
       const bin = atob(dataUrl.split(',')[1]);
       const arr = new Uint8Array(bin.length);
       for (let j = 0; j < bin.length; j++) {
         arr[j] = bin.charCodeAt(j);
       }
 
-      // Embed as PNG to preserve quality
-      const img = await pdfDoc.embedPng(arr);
+      // Embed annotation image
+      const annotImg = await pdfDoc.embedPng(arr);
 
-      // Get original dimensions
-      const imgWidth = img.width;
-      const imgHeight = img.height;
+      // Get the page and overlay annotations
+      const pdfPage = pdfDoc.getPage(pageIndex);
+      const { width, height } = pdfPage.getSize();
 
-      // Calculate scale to fit A4 while maintaining aspect ratio
-      const scaleToFitWidth = A4_WIDTH / imgWidth;
-      const scaleToFitHeight = A4_HEIGHT / imgHeight;
-      const finalScale = Math.min(scaleToFitWidth, scaleToFitHeight);
+      // Calculate scale to match PDF page size
+      const scaleX = width / annotCanvas.width;
+      const scaleY = height / annotCanvas.height;
 
-      const scaledWidth = imgWidth * finalScale;
-      const scaledHeight = imgHeight * finalScale;
-
-      // Center on A4 page
-      const x = (A4_WIDTH - scaledWidth) / 2;
-      const y = (A4_HEIGHT - scaledHeight) / 2;
-
-      const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
-      page.drawImage(img, { x, y, width: scaledWidth, height: scaledHeight });
+      // Draw annotations on top of existing page
+      pdfPage.drawImage(annotImg, {
+        x: 0,
+        y: 0,
+        width: width,
+        height: height,
+        opacity: 1
+      });
 
       // Clean up
-      tempCanvas.width = 0;
-      tempCanvas.height = 0;
+      annotCanvas.width = 0;
+      annotCanvas.height = 0;
 
       // Update progress
-      const progress = Math.round(((i + 1) / editorPages.length) * 100);
+      const progress = Math.round(((i + 1) / pagesToProcess.length) * 100);
       if (statusEl) {
         statusEl.innerText = `${LANG[currentLang].status_exporting} ${progress}%`;
       }
 
+      // Allow UI to breathe every 3 pages
       if (i % 3 === 0) {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
+    // Save the PDF
     const bytes = await pdfDoc.save({
       useObjectStreams: false,
       addDefaultPage: false
     });
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
 
-    const saveRes = await window.electronAPI.saveBytes('edited.pdf', u8);
+    const saveRes = await window.electronAPI.saveBytes('edited.pdf', Array.from(u8));
     if (saveRes.success) {
       statusEl && (statusEl.innerText = `${LANG[currentLang].saved} ${saveRes.path}`);
     } else {
