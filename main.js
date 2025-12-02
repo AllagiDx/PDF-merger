@@ -1,5 +1,4 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
-const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const { PDFDocument } = require("pdf-lib");
@@ -9,102 +8,118 @@ const A4_WIDTH = 595.28;
 const A4_HEIGHT = 841.89;
 const MARGIN = 40;
 
-// ============= LOGGING =============
-const log = require("electron-log");
-log.transports.file.level = "info";
-autoUpdater.logger = log;
+// ============= LOGGING & AUTO-UPDATE =============
+let autoUpdater = null;
+let log = null;
+
+// Only load updater in production (packaged app)
+if (app.isPackaged) {
+  try {
+    autoUpdater = require("electron-updater").autoUpdater;
+    log = require("electron-log");
+    log.transports.file.level = "info";
+    autoUpdater.logger = log;
+  } catch (error) {
+    console.error("Could not load electron-updater:", error.message);
+  }
+} else {
+  console.log("Running in development mode - auto-update disabled");
+}
 
 // ============= AUTO-UPDATE CONFIGURATION =============
 let mainWindow = null;
 let updateCheckInProgress = false;
 
-// Configure auto-updater
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.allowPrerelease = false;
+// Configure auto-updater (only if available)
+if (autoUpdater) {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
 
-// Update event handlers
-autoUpdater.on("checking-for-update", () => {
-  log.info("Checking for updates...");
-  sendStatusToWindow("update-checking", "Checking for updates...");
-});
-
-autoUpdater.on("update-available", (info) => {
-  log.info("Update available:", info.version);
-  sendStatusToWindow("update-available", {
-    version: info.version,
-    releaseDate: info.releaseDate,
-    size: info.files[0]?.size || 0,
+  // Update event handlers
+  autoUpdater.on("checking-for-update", () => {
+    log.info("Checking for updates...");
+    sendStatusToWindow("update-checking", "Checking for updates...");
   });
 
-  // Ask user if they want to download
-  dialog
-    .showMessageBox(mainWindow, {
-      type: "info",
-      title: "Update Available",
-      message: `New version ${info.version} is available!`,
-      detail: `Current version: ${app.getVersion()}\n\nWould you like to download it now? The app will continue working while downloading.`,
-      buttons: ["Download Now", "Remind Me Later"],
-      defaultId: 0,
-      cancelId: 1,
-    })
-    .then((result) => {
-      if (result.response === 0) {
-        autoUpdater.downloadUpdate();
-        sendStatusToWindow("update-downloading", "Downloading update...");
-      }
+  autoUpdater.on("update-available", (info) => {
+    log.info("Update available:", info.version);
+    sendStatusToWindow("update-available", {
+      version: info.version,
+      releaseDate: info.releaseDate,
+      size: info.files[0]?.size || 0,
     });
-});
 
-autoUpdater.on("update-not-available", (info) => {
-  log.info("No updates available");
-  sendStatusToWindow(
-    "update-not-available",
-    "You are using the latest version"
-  );
-  updateCheckInProgress = false;
-});
+    // Ask user if they want to download
+    dialog
+      .showMessageBox(mainWindow, {
+        type: "info",
+        title: "Update Available",
+        message: `New version ${info.version} is available!`,
+        detail: `Current version: ${app.getVersion()}\n\nWould you like to download it now? The app will continue working while downloading.`,
+        buttons: ["Download Now", "Remind Me Later"],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          autoUpdater.downloadUpdate();
+          sendStatusToWindow("update-downloading", "Downloading update...");
+        }
+      });
+  });
 
-autoUpdater.on("error", (err) => {
-  log.error("Update error:", err);
-  sendStatusToWindow("update-error", err.message);
-  updateCheckInProgress = false;
-});
+  autoUpdater.on("update-not-available", (info) => {
+    log.info("No updates available");
+    sendStatusToWindow(
+      "update-not-available",
+      "You are using the latest version"
+    );
+    updateCheckInProgress = false;
+  });
 
-autoUpdater.on("download-progress", (progressObj) => {
-  const message = {
-    percent: Math.round(progressObj.percent),
-    transferred: Math.round((progressObj.transferred / 1024 / 1024) * 10) / 10,
-    total: Math.round((progressObj.total / 1024 / 1024) * 10) / 10,
-    bytesPerSecond: Math.round(progressObj.bytesPerSecond / 1024),
-  };
-  log.info(`Download progress: ${message.percent}%`);
-  sendStatusToWindow("update-progress", message);
-});
+  autoUpdater.on("error", (err) => {
+    log.error("Update error:", err);
+    sendStatusToWindow("update-error", err.message);
+    updateCheckInProgress = false;
+  });
 
-autoUpdater.on("update-downloaded", (info) => {
-  log.info("Update downloaded:", info.version);
-  sendStatusToWindow("update-downloaded", info.version);
+  autoUpdater.on("download-progress", (progressObj) => {
+    const message = {
+      percent: Math.round(progressObj.percent),
+      transferred:
+        Math.round((progressObj.transferred / 1024 / 1024) * 10) / 10,
+      total: Math.round((progressObj.total / 1024 / 1024) * 10) / 10,
+      bytesPerSecond: Math.round(progressObj.bytesPerSecond / 1024),
+    };
+    log.info(`Download progress: ${message.percent}%`);
+    sendStatusToWindow("update-progress", message);
+  });
 
-  dialog
-    .showMessageBox(mainWindow, {
-      type: "info",
-      title: "Update Ready",
-      message: "Update downloaded successfully!",
-      detail: `Version ${info.version} has been downloaded and is ready to install.\n\nThe application will restart to complete the installation.`,
-      buttons: ["Restart Now", "Restart Later"],
-      defaultId: 0,
-      cancelId: 1,
-    })
-    .then((result) => {
-      if (result.response === 0) {
-        setImmediate(() => {
-          app.removeAllListeners("window-all-closed");
-          autoUpdater.quitAndInstall(false, true);
-        });
-      }
-    });
-});
+  autoUpdater.on("update-downloaded", (info) => {
+    log.info("Update downloaded:", info.version);
+    sendStatusToWindow("update-downloaded", info.version);
+
+    dialog
+      .showMessageBox(mainWindow, {
+        type: "info",
+        title: "Update Ready",
+        message: "Update downloaded successfully!",
+        detail: `Version ${info.version} has been downloaded and is ready to install.\n\nThe application will restart to complete the installation.`,
+        buttons: ["Restart Now", "Restart Later"],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          setImmediate(() => {
+            app.removeAllListeners("window-all-closed");
+            autoUpdater.quitAndInstall(false, true);
+          });
+        }
+      });
+  });
+}
 
 function sendStatusToWindow(channel, data) {
   if (mainWindow && mainWindow.webContents) {
@@ -114,8 +129,16 @@ function sendStatusToWindow(channel, data) {
 
 // Check for updates (only in production)
 function checkForUpdates(showNoUpdateDialog = false) {
-  if (!app.isPackaged) {
-    log.info("Skipping update check - running in development mode");
+  if (!app.isPackaged || !autoUpdater) {
+    console.log("Auto-update not available");
+    if (showNoUpdateDialog) {
+      dialog.showMessageBox(mainWindow, {
+        type: "info",
+        title: "Updates Not Available",
+        message: "Auto-update is only available in the installed version",
+        buttons: ["OK"],
+      });
+    }
     return;
   }
 
@@ -239,7 +262,7 @@ function createWindow() {
     mainWindow.show();
 
     // Check for updates 3 seconds after app starts
-    if (app.isPackaged) {
+    if (app.isPackaged && autoUpdater) {
       setTimeout(() => {
         checkForUpdates(false);
       }, 3000);
@@ -272,7 +295,7 @@ app.on("activate", () => {
 
 // Manual update check
 ipcMain.handle("check-for-updates", async () => {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || !autoUpdater) {
     return {
       available: false,
       message: "Updates only work in production build",
