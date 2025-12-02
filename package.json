@@ -47,11 +47,16 @@
     },
     "files": [
       "**/*",
-      "!**/{.git,.github,.DS_Store,.vscode,node_modules,dist,build,node_modules/.cache}/**/*",
+      "!**/{.git,.github,.DS_Store,.vscode,dist,build}/**/*",
       "!README.md",
       "!build-portable.js",
       "!generate-icons.js",
-      "!.gitignore"
+      "!.gitignore",
+      "node_modules/**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!node_modules/*.d.ts",
+      "!node_modules/.bin"
     ],
     "win": {
       "target": [
