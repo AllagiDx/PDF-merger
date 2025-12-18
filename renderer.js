@@ -51,6 +51,15 @@ function registerFeatures() {
     path: "features/pdf-organizer",
   });
 
+  // Register PDF to JPEG feature
+  featureManager.register("pdf-to-jpeg", {
+    title: "PDF JPEG 変換",
+    titleEn: "PDF to JPEG",
+    description: "Convert PDF pages to JPEG images",
+    version: "1.0.0",
+    path: "features/pdf-to-jpeg",
+  });
+
   // Future features can be registered here
   // featureManager.register('page-organizer', { ... });
   // featureManager.register('pdf-compress', { ... });
@@ -90,7 +99,20 @@ function setupFeatureButtons() {
       }
     });
   }
+  const pdfToJpegBtn = document.getElementById("pdfToJpegBtn");
 
+  if (pdfToJpegBtn) {
+    pdfToJpegBtn.addEventListener("click", async () => {
+      try {
+        await featureManager.activate("pdf-to-jpeg", {
+          lang: currentLang,
+        });
+      } catch (error) {
+        console.error("Failed to open PDF to JPEG:", error);
+        utils.showToast("Failed to open PDF to JPEG feature", "error");
+      }
+    });
+  }
   // Single function to update all feature button texts
   const updateFeatureButtonTexts = () => {
     const splitBtnText = document.getElementById("splitBtnText");
@@ -102,6 +124,11 @@ function setupFeatureButtons() {
     if (organizerBtnText) {
       organizerBtnText.textContent =
         currentLang === "ja" ? "ページ整理" : "Page Organizer";
+    }
+    const pdfToJpegBtnText = document.getElementById("pdfToJpegBtnText");
+    if (pdfToJpegBtnText) {
+      pdfToJpegBtnText.textContent =
+        currentLang === "ja" ? "PDF JPEG 変換" : "PDF to JPEG";
     }
   };
 
@@ -126,6 +153,7 @@ const { pdfjsDistPath, pdfjsWorkerPath, pdfLibPath } = window.libs || {};
 // Load pdf.js
 const pdfjsLib = await import(`file://${pdfjsDistPath}`);
 pdfjsLib.GlobalWorkerOptions.workerSrc = `file://${pdfjsWorkerPath}`;
+window.pdfjsLib = pdfjsLib;
 
 // CMap configuration for proper font rendering (especially CJK fonts)
 const CMAP_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.394/cmaps/";

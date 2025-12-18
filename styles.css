@@ -1490,3 +1490,38 @@ main {
     transform: translateY(0) scale(1);
   }
 }
+/* PDF to JPEG Button */
+.pdf-jpeg-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2px;
+  width: 100%;
+  position: relative;
+  border-radius: 10px;
+}
+
+.pdf-jpeg-icon {
+  width: 30px;
+  position: absolute;
+  left: 55px;
+  pointer-events: none;
+  transition: none;
+  z-index: 1;
+}
+
+.pdf-jpeg-btn {
+  background: rgb(214, 191, 45);
+  color: #f8f5f5;
+  font-weight: 600;
+  transition: all 0.2s;
+  width: 100%;
+  padding: 0 0 0 90px;
+}
+
+.pdf-jpeg-btn:hover {
+  background: rgb(194, 171, 25);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(214, 191, 45, 0.3);
+}
