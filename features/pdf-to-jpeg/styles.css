@@ -1,0 +1,626 @@
+/* features/pdfToJpeg/styles.css */
+
+:root {
+  --gold: rgb(214, 191, 45);
+  --gold-light: rgba(214, 191, 45, 0.1);
+  --gold-hover: rgb(194, 171, 25);
+  --cream: #fffef7;
+  --light-grey: #f5f5f5;
+  --dark: #1a1a1a;
+  --white: #ffffff;
+}
+
+.pdf-jpeg-container {
+  width: 100%;
+  min-height: 100vh;
+  background: var(--cream);
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Stage Management */
+.stage {
+  display: none;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.stage.active {
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Upload Stage */
+.upload-header {
+  padding: 20px 40px;
+  background: var(--white);
+  border-bottom: 1px solid #e5e5e5;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  color: var(--dark);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.back-btn:hover {
+  background: var(--light-grey);
+  border-color: var(--gold);
+}
+
+.upload-header h1,
+.preview-header h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--dark);
+  margin: 0;
+}
+
+.upload-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 40px;
+  margin: 40px;
+  background: var(--white);
+  border: 3px dashed var(--gold);
+  border-radius: 16px;
+  transition: all 0.3s;
+  cursor: pointer;
+}
+
+.upload-area.drag-over {
+  background: var(--gold-light);
+  border-color: var(--gold-hover);
+  transform: scale(1.02);
+}
+
+.upload-icon {
+  color: var(--gold);
+  margin-bottom: 20px;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.upload-area h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dark);
+  margin: 0 0 10px 0;
+}
+
+.upload-area p {
+  font-size: 14px;
+  color: #666;
+  margin: 10px 0;
+}
+
+.upload-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  background: var(--gold);
+  color: var(--dark);
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 20px;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(214, 191, 45, 0.3);
+}
+
+.upload-btn:hover {
+  background: var(--gold-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(214, 191, 45, 0.4);
+}
+
+.upload-hint {
+  font-size: 13px;
+  color: #999;
+  margin-top: 20px;
+}
+
+/* Preview Stage */
+.preview-header {
+  padding: 20px 40px;
+  background: var(--white);
+  border-bottom: 1px solid #e5e5e5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--gold);
+  color: var(--dark);
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background: var(--gold-hover);
+  transform: translateY(-2px);
+}
+
+.preview-content {
+  flex: 1;
+  padding: 40px;
+  overflow-y: auto;
+}
+
+.pdf-groups-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 30px;
+  justify-content: center;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.pdf-group {
+  position: relative;
+  background: var(--white);
+  border: 2px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 20px;
+  width: 280px;
+  transition: all 0.3s;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pdf-group:hover {
+  border-color: var(--gold);
+  box-shadow: 0 4px 16px rgba(214, 191, 45, 0.2);
+}
+
+.pdf-group:hover .delete-btn {
+  opacity: 1;
+}
+
+.delete-btn {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 32px;
+  height: 32px;
+  background: #ff5c5c;
+  color: white;
+  border: 2px solid white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.delete-btn:hover {
+  background: #e04545;
+  transform: scale(1.1);
+}
+
+.pdf-thumbnail-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 0.7;
+  background: var(--light-grey);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.pdf-thumbnail {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.3s ease-out;
+}
+
+.pdf-thumbnail canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.thumbnail-loading {
+  color: var(--gold);
+  font-size: 14px;
+}
+
+.pdf-info {
+  margin-bottom: 12px;
+}
+
+.pdf-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dark);
+  margin: 0 0 6px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pdf-meta {
+  font-size: 12px;
+  color: #666;
+  display: flex;
+  gap: 12px;
+}
+
+.rotate-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  background: var(--gold-light);
+  color: var(--dark);
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.rotate-btn:hover {
+  background: var(--gold);
+}
+
+.rotate-btn svg {
+  transition: transform 0.3s;
+}
+
+.rotate-btn:active svg {
+  transform: rotate(90deg);
+}
+
+/* Preview Footer */
+.preview-footer {
+  padding: 20px 40px;
+  background: var(--white);
+  border-top: 1px solid #e5e5e5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.conversion-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.separator {
+  color: #ccc;
+}
+
+.conversion-info strong {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.convert-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  background: var(--gold);
+  color: var(--dark);
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(214, 191, 45, 0.3);
+}
+
+.convert-btn:hover {
+  background: var(--gold-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(214, 191, 45, 0.4);
+}
+
+.convert-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Progress Overlay */
+.progress-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(26, 26, 26, 0.9);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.progress-overlay.active {
+  display: flex;
+}
+
+.progress-container {
+  background: var(--white);
+  padding: 40px 60px;
+  border-radius: 16px;
+  text-align: center;
+  min-width: 400px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.progress-icon {
+  color: var(--gold);
+  margin-bottom: 20px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.progress-container h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dark);
+  margin: 0 0 20px 0;
+}
+
+.progress-bar-wrapper {
+  width: 100%;
+  height: 12px;
+  background: var(--light-grey);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold), var(--gold-hover));
+  width: 0%;
+  transition: width 0.3s ease-out;
+  border-radius: 6px;
+}
+
+.progress-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #666;
+}
+
+.progress-stats span:first-child {
+  font-weight: 700;
+  color: var(--gold);
+}
+
+/* Success Modal */
+.success-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(26, 26, 26, 0.9);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10001;
+}
+
+.success-modal.active {
+  display: flex;
+}
+
+.success-content {
+  background: var(--white);
+  padding: 50px;
+  border-radius: 16px;
+  text-align: center;
+  max-width: 500px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  animation: scaleIn 0.4s ease-out;
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.success-icon {
+  color: #10b981;
+  margin-bottom: 20px;
+}
+
+.success-content h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--dark);
+  margin: 0 0 10px 0;
+}
+
+.success-content p {
+  font-size: 16px;
+  color: #666;
+  margin: 0 0 20px 0;
+}
+
+.success-path {
+  background: var(--light-grey);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #666;
+  word-break: break-all;
+  margin-bottom: 30px;
+  border-left: 3px solid var(--gold);
+}
+
+.success-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.success-btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.success-btn.primary {
+  background: var(--gold);
+  color: var(--dark);
+}
+
+.success-btn.primary:hover {
+  background: var(--gold-hover);
+  transform: translateY(-2px);
+}
+
+.success-btn.secondary {
+  background: var(--light-grey);
+  color: var(--dark);
+}
+
+.success-btn.secondary:hover {
+  background: #e5e5e5;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .upload-header,
+  .preview-header,
+  .preview-footer {
+    padding: 16px 20px;
+  }
+
+  .preview-content {
+    padding: 20px;
+  }
+
+  .pdf-groups-container {
+    gap: 20px;
+  }
+
+  .pdf-group {
+    width: 100%;
+    max-width: 320px;
+  }
+
+  .preview-footer {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .conversion-info {
+    flex-direction: column;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .separator {
+    display: none;
+  }
+
+  .progress-container,
+  .success-content {
+    margin: 20px;
+    padding: 30px;
+    min-width: auto;
+  }
+}
