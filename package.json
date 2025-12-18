@@ -112,7 +112,7 @@
       "warningsAsErrors": false,
       "unicode": true,
       "guid": "com.utsavadhikari.pdfmerger",
-      "differentialPacakage": true
+      "differentialPackage": true
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"
