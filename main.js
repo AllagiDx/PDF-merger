@@ -890,15 +890,28 @@ ipcMain.handle("save-bytes-base64", async (event, { fileName, base64 }) => {
       defaultPath: fileName || "merged.pdf",
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
-    if (canceled || !filePath) return { success: false, message: "canceled" };
+
+    if (canceled || !filePath) {
+      console.log("❌ Save dialog cancelled by user");
+      return { success: false, message: "canceled" };
+    }
+
+    console.log(`💾 Saving PDF: ${fileName}`);
+    console.log(
+      `   Size: ${Math.round((base64.length / 1024 / 1024) * 0.75)}MB`
+    );
 
     // Convert base64 directly to buffer
     const buffer = Buffer.from(base64, "base64");
 
+    console.log(`   Buffer size: ${Math.round(buffer.length / 1024 / 1024)}MB`);
+
     await fs.promises.writeFile(filePath, buffer);
+
+    console.log(`✅ PDF saved successfully: ${filePath}`);
     return { success: true, path: filePath };
   } catch (err) {
-    console.error("save-bytes-base64 error", err);
+    console.error("❌ save-bytes-base64 error:", err);
     return { success: false, message: err.message || String(err) };
   }
 });

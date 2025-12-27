@@ -1,5 +1,5 @@
 // features/pdf-merge/feature.js
-// PDF Merge Feature - FIXED rotation + visual thumbnail rotation
+// PDF Merge Feature - FIXED buffer handling + canvas validation
 
 let pdfjsLib = null;
 let PDFLib = null;
@@ -67,6 +67,10 @@ export async function cleanup(instance) {
     if (file.canvas) {
       file.canvas.width = 0;
       file.canvas.height = 0;
+    }
+    if (file.originalCanvas) {
+      file.originalCanvas.width = 0;
+      file.originalCanvas.height = 0;
     }
   });
 
@@ -213,6 +217,22 @@ function validateFileBuffer(buffer, fileName, fileType) {
 }
 
 /**
+ * ✅ CRITICAL FIX: Create truly independent buffer copy
+ */
+function createIndependentBuffer(sourceBuffer) {
+  if (!sourceBuffer || sourceBuffer.byteLength === 0) {
+    return new ArrayBuffer(0);
+  }
+
+  // Create completely new ArrayBuffer with copied bytes
+  const sourceArray = new Uint8Array(sourceBuffer);
+  const newArray = new Uint8Array(sourceArray.length);
+  newArray.set(sourceArray); // Byte-by-byte copy
+
+  return newArray.buffer;
+}
+
+/**
  * Handle file selection
  */
 async function handleFileSelect(fileList, container) {
@@ -255,26 +275,15 @@ async function handleFileSelect(fileList, container) {
           continue;
         }
 
-        // ✅ CRITICAL: Create TRULY independent copies by copying byte-by-byte
-        // This ensures proper buffer copying with independent ArrayBuffers
-        const pristineArray = new Uint8Array(buffer);
-        const renderArray = new Uint8Array(buffer);
-
-        // Create new ArrayBuffers from the Uint8Arrays
-        const pristineBuffer = pristineArray.buffer.slice(
-          pristineArray.byteOffset,
-          pristineArray.byteOffset + pristineArray.byteLength
-        );
-        const renderBuffer = renderArray.buffer.slice(
-          renderArray.byteOffset,
-          renderArray.byteOffset + renderArray.byteLength
-        );
+        // ✅ Create THREE independent copies: pristine, render, and working
+        const pristineBuffer = createIndependentBuffer(buffer);
+        const renderBuffer = createIndependentBuffer(buffer);
 
         const fileData = {
           name: file.name,
           type: file.type,
           size: file.size,
-          buffer: pristineBuffer, // ✅ Independent copy for merging
+          buffer: pristineBuffer, // ✅ Protected copy for merging
           pages: 0,
           canvas: null,
           originalCanvas: null,
@@ -283,7 +292,7 @@ async function handleFileSelect(fileList, container) {
         // Get page count for PDFs
         if (file.type === "application/pdf") {
           try {
-            // ✅ Create a fresh Uint8Array view for PDF.js
+            // ✅ Use render buffer for PDF.js
             const pdfData = new Uint8Array(renderBuffer);
             const loadingTask = pdfjsLib.getDocument({ data: pdfData });
             const pdf = await loadingTask.promise;
@@ -316,7 +325,7 @@ async function handleFileSelect(fileList, container) {
           fileData.pages = 1;
           // ✅ Use render buffer for image rendering
           const imageCanvas = await renderImageThumbnail(
-            renderBuffer.buffer,
+            renderBuffer,
             file.type
           );
 
@@ -420,7 +429,7 @@ async function renderImageThumbnail(buffer, type) {
 }
 
 /**
- * ✅ NEW: Rotate canvas visually
+ * ✅ FIXED: Rotate canvas with proper pixel data preservation
  */
 function rotateCanvas(sourceCanvas, degrees) {
   if (!sourceCanvas || degrees === 0) return sourceCanvas;
@@ -455,6 +464,9 @@ function rotateCanvas(sourceCanvas, degrees) {
       break;
   }
 
+  // ✅ CRITICAL: Draw with high quality
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(sourceCanvas, 0, 0);
   ctx.restore();
 
@@ -607,7 +619,6 @@ function createFileCard(file, index, container) {
     const ctx = clonedCanvas.getContext("2d");
     ctx.drawImage(displayCanvas, 0, 0);
 
-    ctx.drawImage(displayCanvas, 0, 0);
     thumbnail.appendChild(clonedCanvas);
   } else {
     thumbnail.innerHTML = '<div class="file-placeholder">📄</div>';
@@ -717,6 +728,76 @@ function updateStats(container) {
 }
 
 /**
+ * ✅ Validate canvas has actual pixel data
+ */
+function validateCanvas(canvas, fileName) {
+  if (!canvas || canvas.width === 0 || canvas.height === 0) {
+    console.error(
+      `❌ Invalid canvas for ${fileName}: dimensions ${canvas?.width}x${canvas?.height}`
+    );
+    return false;
+  }
+
+  try {
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.getImageData(
+      0,
+      0,
+      Math.min(10, canvas.width),
+      Math.min(10, canvas.height)
+    );
+
+    // Check if canvas has any non-transparent pixels
+    const hasPixels = imageData.data.some((value, index) => {
+      // Check alpha channel (every 4th value)
+      return index % 4 === 3 && value > 0;
+    });
+
+    if (!hasPixels) {
+      console.error(`❌ Canvas for ${fileName} has no visible pixels`);
+      return false;
+    }
+
+    console.log(`✅ Canvas validation passed for ${fileName}`);
+    return true;
+  } catch (err) {
+    console.error(`❌ Canvas validation error for ${fileName}:`, err);
+    return false;
+  }
+}
+
+/**
+ * ✅ Convert canvas to image bytes with validation
+ */
+async function canvasToImageBytes(canvas, fileName) {
+  if (!validateCanvas(canvas, fileName)) {
+    throw new Error(`Invalid canvas for ${fileName}`);
+  }
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error(`Failed to convert canvas to blob for ${fileName}`));
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const arrayBuffer = reader.result;
+          resolve(new Uint8Array(arrayBuffer));
+        };
+        reader.onerror = () =>
+          reject(new Error(`Failed to read blob for ${fileName}`));
+        reader.readAsArrayBuffer(blob);
+      },
+      "image/png",
+      0.95
+    );
+  });
+}
+
+/**
  * Merge files
  */
 async function mergeFiles(container) {
@@ -744,13 +825,10 @@ async function mergeFiles(container) {
           const rotation = rotations[actualIndex] || 0;
 
           try {
-            // ✅ CRITICAL: Create TRULY independent copy with byte-by-byte duplication
-            const sourceArray = new Uint8Array(file.buffer);
-            const independentArray = new Uint8Array(sourceArray.length);
-            independentArray.set(sourceArray); // Deep copy
-            const independentCopy = independentArray.buffer;
-
             if (file.type === "application/pdf") {
+              // ✅ Create fresh independent copy for PDFLib
+              const independentCopy = createIndependentBuffer(file.buffer);
+
               const pdfDoc = await PDFLib.PDFDocument.load(independentCopy, {
                 ignoreEncryption: true,
                 updateMetadata: false,
@@ -759,30 +837,56 @@ async function mergeFiles(container) {
 
               return { type: "pdf", doc: pdfDoc, rotation };
             } else if (file.type.startsWith("image/")) {
-              const imageBytes = independentArray; // Already a Uint8Array
-              let embedded;
+              let imageBytes;
 
-              try {
-                if (file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name)) {
-                  embedded = await mergedPdf.embedJpg(imageBytes);
-                } else if (
-                  file.type === "image/png" ||
-                  /\.png$/i.test(file.name)
-                ) {
-                  embedded = await mergedPdf.embedPng(imageBytes);
-                } else {
-                  // Fallback: try PNG first, then JPEG
-                  try {
-                    embedded = await mergedPdf.embedPng(imageBytes);
-                  } catch (pngErr) {
+              // ✅ If rotated, convert canvas to image bytes
+              if (rotation !== 0 && file.canvas) {
+                console.log(
+                  `🔄 Converting rotated canvas to PNG for ${file.name}`
+                );
+                imageBytes = await canvasToImageBytes(file.canvas, file.name);
+
+                // ✅ Embed as PNG since we converted from canvas
+                const embedded = await mergedPdf.embedPng(imageBytes);
+                return {
+                  type: "image",
+                  embedded,
+                  rotation: 0,
+                  name: file.name,
+                }; // Reset rotation since canvas already rotated
+              } else {
+                // ✅ Use original buffer for non-rotated images
+                const independentCopy = createIndependentBuffer(file.buffer);
+                imageBytes = new Uint8Array(independentCopy);
+
+                let embedded;
+                try {
+                  if (
+                    file.type === "image/jpeg" ||
+                    /\.jpe?g$/i.test(file.name)
+                  ) {
                     embedded = await mergedPdf.embedJpg(imageBytes);
+                  } else if (
+                    file.type === "image/png" ||
+                    /\.png$/i.test(file.name)
+                  ) {
+                    embedded = await mergedPdf.embedPng(imageBytes);
+                  } else {
+                    // Fallback: try PNG first, then JPEG
+                    try {
+                      embedded = await mergedPdf.embedPng(imageBytes);
+                    } catch (pngErr) {
+                      embedded = await mergedPdf.embedJpg(imageBytes);
+                    }
                   }
+                  return { type: "image", embedded, rotation, name: file.name };
+                } catch (embedErr) {
+                  console.error(
+                    `Failed to embed image ${file.name}:`,
+                    embedErr
+                  );
+                  return null;
                 }
-
-                return { type: "image", embedded, rotation };
-              } catch (embedErr) {
-                console.error(`Failed to embed image ${file.name}:`, embedErr);
-                return null;
               }
             }
           } catch (err) {
@@ -807,7 +911,7 @@ async function mergeFiles(container) {
             );
 
             copiedPages.forEach((page) => {
-              // ✅ FIX: Set ABSOLUTE rotation, not additive
+              // ✅ Set ABSOLUTE rotation, not additive
               if (data.rotation !== 0) {
                 page.setRotation(PDFLib.degrees(data.rotation));
               }
@@ -821,7 +925,7 @@ async function mergeFiles(container) {
             const imgWidth = data.embedded.width;
             const imgHeight = data.embedded.height;
 
-            // ✅ FIX: Adjust scale calculation based on rotation
+            // ✅ Calculate scale based on rotation
             let scale;
             if (data.rotation === 90 || data.rotation === 270) {
               // Swapped dimensions for 90/270 degree rotation
@@ -841,7 +945,7 @@ async function mergeFiles(container) {
 
             const page = mergedPdf.addPage([A4_WIDTH, A4_HEIGHT]);
 
-            // ✅ Set rotation BEFORE drawing
+            // ✅ Set rotation BEFORE drawing (only if not already rotated in canvas)
             if (data.rotation !== 0) {
               page.setRotation(PDFLib.degrees(data.rotation));
             }
@@ -855,6 +959,7 @@ async function mergeFiles(container) {
           }
         }
       }
+
       processedCount += batch.length;
       const progress = Math.floor(5 + (processedCount / files.length) * 85);
       updateProgress(
@@ -873,38 +978,98 @@ async function mergeFiles(container) {
       addDefaultPage: false,
     });
 
-    updateProgress(container, "Saving to disk...", 95);
-
-    // Convert to base64 for efficient IPC
-    const blob = new Blob([mergedBytes], { type: "application/pdf" });
-    const base64 = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result.split(",")[1]);
-      reader.readAsDataURL(blob);
-    });
-
-    const saveRes = await window.electronAPI.saveBytesBase64(
-      "merged.pdf",
-      base64
+    console.log(
+      `✅ PDF generated: ${Math.round(mergedBytes.length / 1024 / 1024)}MB`
     );
 
-    hideProgress(container);
+    updateProgress(container, "Preparing to save...", 95);
 
-    if (saveRes.success) {
-      showToast(`PDF saved: ${saveRes.path}`, "success");
-    } else {
-      showToast("Save cancelled", "info");
+    // ========================================
+    // ✅ NEW SAVE LOGIC FOR LARGE FILES
+    // ========================================
+
+    const fileSizeMB = Math.round(mergedBytes.length / 1024 / 1024);
+    const MAX_SAFE_SIZE = 100 * 1024 * 1024; // 100MB threshold
+
+    try {
+      if (mergedBytes.length > MAX_SAFE_SIZE) {
+        console.log(
+          `⚠️ Large file detected (${fileSizeMB}MB) - using direct binary save`
+        );
+
+        // For very large files, save directly without base64 conversion
+        const saveRes = await window.electronAPI.saveBytes(
+          "merged.pdf",
+          mergedBytes
+        );
+
+        hideProgress(container);
+
+        if (saveRes.success) {
+          showToast(`PDF saved: ${saveRes.path}`, "success");
+        } else if (saveRes.message === "canceled") {
+          showToast("Save cancelled", "info");
+        } else {
+          showToast(`Failed to save: ${saveRes.message}`, "error");
+        }
+      } else {
+        console.log(
+          `📦 Standard file (${fileSizeMB}MB) - converting to base64...`
+        );
+
+        // For smaller files, use base64 (more compatible)
+        updateProgress(container, "Converting to base64...", 96);
+
+        const blob = new Blob([mergedBytes], { type: "application/pdf" });
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result.split(",")[1];
+            console.log(
+              `✅ Base64 conversion complete: ${Math.round(
+                result.length / 1024 / 1024
+              )}MB`
+            );
+            resolve(result);
+          };
+          reader.onerror = () =>
+            reject(new Error("Failed to convert to base64"));
+          reader.readAsDataURL(blob);
+        });
+
+        updateProgress(container, "Saving to disk...", 98);
+        console.log(`📤 Sending to main process...`);
+
+        const saveRes = await window.electronAPI.saveBytesBase64(
+          "merged.pdf",
+          base64
+        );
+
+        hideProgress(container);
+
+        if (saveRes.success) {
+          showToast(`PDF saved: ${saveRes.path}`, "success");
+        } else if (saveRes.message === "canceled") {
+          showToast("Save cancelled", "info");
+        } else {
+          showToast(`Failed to save: ${saveRes.message}`, "error");
+        }
+      }
+    } catch (saveError) {
+      console.error("❌ Save operation failed:", saveError);
+      hideProgress(container);
+      showToast(`Save error: ${saveError.message}`, "error");
     }
   } catch (error) {
-    console.error("Merge error:", error);
+    console.error("❌ Merge error:", error);
     hideProgress(container);
     showToast("Failed to merge files: " + error.message, "error");
   }
 }
-
 /**
- * Show progress overlay
- */
+
+Show progress overlay
+*/
 function showProgress(container, message, percent) {
   const overlay = container.querySelector("#progressOverlay");
   const title = container.querySelector("#progressTitle");
@@ -916,26 +1081,26 @@ function showProgress(container, message, percent) {
   if (title)
     title.textContent = currentLang === "ja" ? "処理中..." : "Processing...";
   if (detail) detail.textContent = message;
-  if (bar) bar.style.width = `${percent}%`;
-  if (text) text.textContent = `${percent}%`;
+  if (bar) bar.style.width = ` ${percent}%`;
+  if (text) text.textContent = ` ${percent}%`;
 }
-
 /**
- * Update progress
- */
+
+Update progress
+*/
 function updateProgress(container, message, percent) {
   const detail = container.querySelector("#progressDetail");
   const bar = container.querySelector("#progressBar");
   const text = container.querySelector("#progressText");
 
   if (detail) detail.textContent = message;
-  if (bar) bar.style.width = `${percent}%`;
-  if (text) text.textContent = `${percent}%`;
+  if (bar) bar.style.width = ` ${percent}%`;
+  if (text) text.textContent = ` ${percent}%`;
 }
-
 /**
- * Hide progress overlay
- */
+
+Hide progress overlay
+*/
 function hideProgress(container) {
   const overlay = container.querySelector("#progressOverlay");
   if (overlay) {
@@ -948,8 +1113,9 @@ function hideProgress(container) {
 }
 
 /**
- * Show toast notification
- */
+
+Show toast notification
+*/
 function showToast(message, type = "info") {
   if (window.pdfUtils && window.pdfUtils.showToast) {
     window.pdfUtils.showToast(message, type);
@@ -959,8 +1125,9 @@ function showToast(message, type = "info") {
 }
 
 /**
- * Format file size
- */
+
+Format file size
+*/
 function formatFileSize(bytes) {
   if (bytes === 0) return "0 B";
   if (bytes < 1024) return bytes + " B";
@@ -969,8 +1136,9 @@ function formatFileSize(bytes) {
 }
 
 /**
- * Apply language translations
- */
+
+Apply language translations
+*/
 function applyLanguage() {
   const translations = {
     ja: {
@@ -1010,7 +1178,6 @@ function applyLanguage() {
   };
 
   const t = translations[currentLang] || translations.en;
-
   // Update UI text
   const elements = {
     backBtnText: t.back,
@@ -1029,13 +1196,11 @@ function applyLanguage() {
     mergeNowText: t.merge,
     infoText: t.info,
   };
-
   Object.keys(elements).forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.textContent = elements[id];
   });
 }
-
 // Export for debugging
 if (typeof window !== "undefined") {
   window.pdfMergeFeature = { files, rotations };
