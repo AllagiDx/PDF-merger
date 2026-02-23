@@ -10,9 +10,13 @@ const MAX_TOTAL_SIZE = 1 * 1024 * 1024 * 1024; // 1GB limit
 const COMPRESSION_SETTINGS = {
   standard: {
     description: "Standard (30-40% reduction)",
+    jpegQuality: 0.82,
+    renderScale: 1.6,
   },
   maximum: {
     description: "Maximum (40-50% reduction)",
+    jpegQuality: 0.68,
+    renderScale: 1.35,
   },
 };
 
@@ -66,6 +70,8 @@ const LANG = {
     errorInvalidPdf: "無効なPDFファイルです",
     errorLoading: "PDFの読み込みに失敗しました",
     errorCompressing: "圧縮に失敗しました",
+    errorNoFilesCompressed: "圧縮に成功したPDFがありません",
+    saveCanceled: "保存がキャンセルされました",
     loadingFiles: "ファイルを読み込み中...",
     mergingFiles: "ファイルを結合中...",
     compressingFiles: "圧縮中...",
@@ -110,6 +116,8 @@ const LANG = {
     errorInvalidPdf: "Invalid PDF file",
     errorLoading: "Failed to load PDF",
     errorCompressing: "Failed to compress",
+    errorNoFilesCompressed: "No files were compressed successfully",
+    saveCanceled: "Save cancelled",
     loadingFiles: "Loading files...",
     mergingFiles: "Merging files...",
     compressingFiles: "Compressing...",
@@ -538,6 +546,40 @@ async function handleFiles(files) {
   }
 } // features/pdf-compress/feature.js - Part 4: Compression Logic
 
+function ensurePdfExtension(fileName) {
+  if (!fileName) return `compressed_${Date.now()}.pdf`;
+  return fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+}
+
+function getMergedOutputName() {
+  if (state.pdfFiles.length === 1) {
+    return ensurePdfExtension(`compressed_${state.pdfFiles[0].name}`);
+  }
+  return `compressed_merged_${Date.now()}.pdf`;
+}
+
+function toUint8Array(data) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return new Uint8Array(data);
+}
+
+function uint8ArrayToBase64(bytes) {
+  const data = toUint8Array(bytes);
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < data.length; i += chunkSize) {
+    const chunk = data.subarray(i, Math.min(i + chunkSize, data.length));
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
 /**
  * Start compression process
  */
@@ -658,9 +700,12 @@ async function compressMerged() {
       }
     );
 
-    const compressedBytes = compressedResult.bytes;
+    const compressedBytes = toUint8Array(compressedResult.bytes);
     const compressedSize = compressedResult.size;
-    const reduction = ((totalSize - compressedSize) / totalSize) * 100;
+    const reduction =
+      totalSize > 0
+        ? Math.max(0, ((totalSize - compressedSize) / totalSize) * 100)
+        : 0;
 
     console.log(`✅ Compression complete:`);
     console.log(`   Original: ${utils.formatFileSize(totalSize)}`);
@@ -670,14 +715,18 @@ async function compressMerged() {
     // STEP 3: Save file
     updateProgress(90, `Saving...`, totalSize, compressedSize, reduction);
 
-    const fileName = `compressed_${Date.now()}.pdf`;
-    const base64Data = arrayBufferToBase64(compressedBytes);
+    const fileName = getMergedOutputName();
     const result = await window.electronAPI.savePdfFile({
       fileName,
-      base64Data,
+      base64Data: uint8ArrayToBase64(compressedBytes),
     });
 
     hideProgressOverlay();
+
+    if (result?.message === "canceled") {
+      utils.showToast(L.saveCanceled, "info");
+      return;
+    }
 
     if (result && result.success) {
       const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -747,10 +796,12 @@ async function compressSeparate() {
           }
         );
 
-        const compressedBytes = compressedResult.bytes;
+        const compressedBytes = toUint8Array(compressedResult.bytes);
         const compressedSize = compressedResult.size;
         const reduction =
-          ((originalSize - compressedSize) / originalSize) * 100;
+          originalSize > 0
+            ? Math.max(0, ((originalSize - compressedSize) / originalSize) * 100)
+            : 0;
 
         console.log(`  ✅ Compressed: ${utils.formatFileSize(compressedSize)}`);
         console.log(`  📉 Reduction: ${reduction.toFixed(1)}%`);
@@ -759,8 +810,9 @@ async function compressSeparate() {
         totalCompressedSize += compressedSize;
 
         compressedFiles.push({
-          name: `compressed_${pdfData.name}`,
-          base64Data: arrayBufferToBase64(compressedBytes),
+          name: ensurePdfExtension(`compressed_${pdfData.name}`),
+          // Use base64 for multi-file IPC payloads to avoid structured clone errors.
+          base64Data: uint8ArrayToBase64(compressedBytes),
         });
       } catch (error) {
         console.error(`  ❌ Failed: ${pdfData.name}`, error);
@@ -768,13 +820,32 @@ async function compressSeparate() {
       }
     }
 
+    if (compressedFiles.length === 0) {
+      throw new Error(L.errorNoFilesCompressed);
+    }
+
     // Save all files to a folder
     const folderResult = await window.electronAPI.saveMultiplePdfFiles({
       files: compressedFiles,
     });
 
+    if (folderResult?.message === "canceled") {
+      hideProgressOverlay();
+      utils.showToast(L.saveCanceled, "info");
+      return;
+    }
+
+    if (!folderResult?.success) {
+      throw new Error(folderResult?.message || "Failed to save files");
+    }
+
     const totalReduction =
-      ((totalOriginalSize - totalCompressedSize) / totalOriginalSize) * 100;
+      totalOriginalSize > 0
+        ? Math.max(
+            0,
+            ((totalOriginalSize - totalCompressedSize) / totalOriginalSize) * 100
+          )
+        : 0;
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
 
     hideProgressOverlay();
@@ -802,13 +873,16 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
     `  🔧 Starting smart PDF compression with image recompression...`
   );
 
+  const sourceBytes = toUint8Array(pdfBytes);
+  let pdfDoc = null;
+
   try {
     progressCallback(0.05);
 
     const PDFLib = await ensurePDFLib();
 
     // Load the original PDF
-    const srcPdf = await PDFLib.PDFDocument.load(pdfBytes, {
+    const srcPdf = await PDFLib.PDFDocument.load(sourceBytes, {
       ignoreEncryption: true,
       updateMetadata: false,
     });
@@ -825,22 +899,15 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
     }
 
     // Load PDF with PDF.js for rendering
-    const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
-    const pdfDoc = await loadingTask.promise;
+    const loadingTask = pdfjsLib.getDocument({ data: sourceBytes });
+    pdfDoc = await loadingTask.promise;
 
     // Create new optimized PDF
     const optimizedPdf = await PDFLib.PDFDocument.create();
 
     // Determine quality and scale based on compression level
-    // Higher scale = sharper text, but larger file
-    // Lower quality = smaller file, acceptable for images
-    const quality = settings.description.includes("Maximum") ? 0.55 : 0.7;
-    const scale = settings.description.includes("Maximum") ? 1.8 : 2.0;
-
-    // DPI calculation: 72 points per inch is standard
-    // scale 1.5 = 108 DPI (readable text)
-    // scale 1.8 = 130 DPI (sharp text, good balance)
-    // scale 2.0 = 144 DPI (very sharp, but larger)
+    const quality = settings.jpegQuality ?? 0.8;
+    const scale = settings.renderScale ?? 1.6;
 
     console.log(
       `  🎨 Rendering with quality: ${
@@ -853,25 +920,35 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
       try {
         // Render page to canvas
         const page = await pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale });
+        const renderViewport = page.getViewport({ scale });
+        const outputViewport = page.getViewport({ scale: 1 });
 
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d", {
           alpha: false, // No transparency = smaller file
           desynchronized: true, // Better performance
         });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        if (!context) {
+          throw new Error("Failed to create canvas context");
+        }
+
+        canvas.width = Math.max(1, Math.floor(renderViewport.width));
+        canvas.height = Math.max(1, Math.floor(renderViewport.height));
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
 
         await page.render({
           canvasContext: context,
-          viewport: viewport,
+          viewport: renderViewport,
         }).promise;
 
         // Convert canvas to JPEG with compression
         const imageBlob = await new Promise((resolve) => {
           canvas.toBlob(resolve, "image/jpeg", quality);
         });
+        if (!imageBlob) {
+          throw new Error("Canvas toBlob returned empty result");
+        }
 
         const imageBytes = new Uint8Array(await imageBlob.arrayBuffer());
 
@@ -884,16 +961,16 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
         // Embed compressed image in new PDF
         const jpegImage = await optimizedPdf.embedJpg(imageBytes);
 
-        // Add page with original dimensions (in points)
-        const origPage = srcPdf.getPage(pageNum - 1);
-        const { width, height } = origPage.getSize();
+        // Keep the output page ratio equal to the rendered page ratio.
+        const pageWidth = Math.max(1, outputViewport.width);
+        const pageHeight = Math.max(1, outputViewport.height);
 
-        const newPage = optimizedPdf.addPage([width, height]);
+        const newPage = optimizedPdf.addPage([pageWidth, pageHeight]);
         newPage.drawImage(jpegImage, {
           x: 0,
           y: 0,
-          width: width,
-          height: height,
+          width: pageWidth,
+          height: pageHeight,
         });
 
         const progress = 0.1 + (pageNum / pageCount) * 0.75;
@@ -904,6 +981,9 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
         // Clean up canvas
         canvas.width = 0;
         canvas.height = 0;
+        if (page.cleanup) {
+          page.cleanup();
+        }
 
         // Yield to prevent blocking
         if (pageNum % 3 === 0) {
@@ -941,7 +1021,23 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
 
     progressCallback(1.0);
 
-    const originalSize = pdfBytes.length;
+    // Verify compressed output can be parsed before saving.
+    try {
+      await PDFLib.PDFDocument.load(compressedBytes, {
+        ignoreEncryption: true,
+      });
+    } catch (validationError) {
+      console.warn(
+        "  ⚠️ Compressed output validation failed. Falling back to original PDF.",
+        validationError
+      );
+      return {
+        bytes: sourceBytes,
+        size: sourceBytes.byteLength,
+      };
+    }
+
+    const originalSize = sourceBytes.byteLength;
     const compressedSize = compressedBytes.length;
     const reduction = ((originalSize - compressedSize) / originalSize) * 100;
 
@@ -950,20 +1046,37 @@ async function compressPdfSmart(pdfBytes, settings, progressCallback) {
     console.log(`     Compressed: ${Math.round(compressedSize / 1024)}KB`);
     console.log(`     Reduction: ${reduction.toFixed(1)}%`);
 
-    // Warning if file got bigger
-    if (compressedSize > originalSize) {
-      console.warn(`  ⚠️ WARNING: Output is LARGER than input!`);
-      console.warn(`     This PDF may already be heavily compressed.`);
-      console.warn(`     Consider using the original file instead.`);
+    // Never output a larger PDF than input.
+    if (compressedSize >= originalSize) {
+      console.warn(`  ⚠️ Output is not smaller than input. Using original PDF.`);
+      return {
+        bytes: sourceBytes,
+        size: sourceBytes.byteLength,
+      };
     }
 
     return {
-      bytes: compressedBytes,
+      bytes: toUint8Array(compressedBytes),
       size: compressedBytes.length,
     };
   } catch (error) {
     console.error("  ❌ Compression error:", error);
     throw error;
+  } finally {
+    try {
+      if (pdfDoc?.cleanup) {
+        pdfDoc.cleanup();
+      }
+    } catch (cleanupError) {
+      console.warn("  ⚠️ PDF.js cleanup warning:", cleanupError);
+    }
+    try {
+      if (pdfDoc?.destroy) {
+        await pdfDoc.destroy();
+      }
+    } catch (destroyError) {
+      console.warn("  ⚠️ PDF.js destroy warning:", destroyError);
+    }
   }
 }
 /**
@@ -988,21 +1101,6 @@ async function ensurePDFLib() {
     script.onerror = () => reject(new Error("Failed to load pdf-lib"));
     document.head.appendChild(script);
   });
-}
-
-/**
- * Convert ArrayBuffer to Base64
- */
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 32768; // Process in 32KB chunks to avoid call stack issues
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode.apply(null, chunk);
-  }
-  return btoa(binary);
 }
 
 /**

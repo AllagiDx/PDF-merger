@@ -6,5 +6,10 @@
   "editor.formatOnSave": true,
   "vscode-autosave.debounceMs": 7000,
   "files.autoSaveDelay": 10000,
-  "vscode-autosave.disableProgressNotifications": true
+  "vscode-autosave.disableProgressNotifications": true,
+  "files.associations": {
+    "*.html": "html",
+    "*.ttml": "xml",
+    "*.ttss": "css"
+  }
 }

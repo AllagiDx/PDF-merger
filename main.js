@@ -1082,15 +1082,79 @@ ipcMain.handle(
   }
 );
 // ============= PDF COMPRESS SAVE HANDLERS =============
-ipcMain.handle("save-pdf-file", async (event, { fileName, base64Data }) => {
-  try {
-    const downloadsPath = app.getPath("downloads");
-    const filePath = path.join(downloadsPath, fileName);
+function normalizePdfFileName(fileName, fallbackName) {
+  const raw = (fileName || fallbackName || "compressed.pdf").trim();
+  const safe = raw.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+  return safe.toLowerCase().endsWith(".pdf") ? safe : `${safe}.pdf`;
+}
 
-    const buffer = Buffer.from(base64Data, "base64");
+function ensureUniqueFilePath(targetPath) {
+  const parsed = path.parse(targetPath);
+  let candidate = targetPath;
+  let counter = 1;
+
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(parsed.dir, `${parsed.name}_${counter}${parsed.ext}`);
+    counter += 1;
+  }
+
+  return candidate;
+}
+
+function payloadToBuffer(payload) {
+  if (!payload) {
+    throw new Error("No data payload provided");
+  }
+
+  if (payload.bytes !== undefined && payload.bytes !== null) {
+    const bytes = payload.bytes;
+
+    if (bytes instanceof Uint8Array) {
+      return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    }
+    if (ArrayBuffer.isView(bytes)) {
+      return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    }
+    if (bytes instanceof ArrayBuffer) {
+      return Buffer.from(bytes);
+    }
+    if (Array.isArray(bytes)) {
+      return Buffer.from(bytes);
+    }
+
+    throw new Error("Unsupported bytes payload format");
+  }
+
+  if (typeof payload.base64Data === "string") {
+    return Buffer.from(payload.base64Data, "base64");
+  }
+  if (typeof payload.base64 === "string") {
+    return Buffer.from(payload.base64, "base64");
+  }
+
+  throw new Error("No file data provided");
+}
+
+ipcMain.handle("save-pdf-file", async (event, payload = {}) => {
+  try {
+    const suggestedName = normalizePdfFileName(
+      payload.fileName,
+      `compressed_${Date.now()}.pdf`
+    );
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: "Save PDF",
+      defaultPath: suggestedName,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+
+    if (canceled || !filePath) {
+      return { success: false, message: "canceled" };
+    }
+
+    const buffer = payloadToBuffer(payload);
     await fs.promises.writeFile(filePath, buffer);
 
-    console.log(`✅ Saved compressed PDF: ${fileName}`);
+    console.log(`✅ Saved compressed PDF: ${filePath}`);
     return { success: true, path: filePath };
   } catch (err) {
     console.error("save-pdf-file error:", err);
@@ -1098,37 +1162,46 @@ ipcMain.handle("save-pdf-file", async (event, { fileName, base64Data }) => {
   }
 });
 
-ipcMain.handle("save-multiple-pdf-files", async (event, { files }) => {
+ipcMain.handle("save-multiple-pdf-files", async (event, payload = {}) => {
   try {
-    // Create timestamp folder
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    const hour = String(now.getHours()).padStart(2, "0");
-    const minute = String(now.getMinutes()).padStart(2, "0");
-    const folderName = `${year}${month}${day}_${hour}${minute}_compressed`;
+    const { files } = payload;
 
-    const downloadsPath = app.getPath("downloads");
-    let folderPath = path.join(downloadsPath, folderName);
-
-    let counter = 1;
-    while (fs.existsSync(folderPath)) {
-      folderPath = path.join(downloadsPath, `${folderName}_${counter}`);
-      counter++;
+    if (!Array.isArray(files) || files.length === 0) {
+      return { success: false, message: "No files to save" };
     }
 
-    await fs.promises.mkdir(folderPath, { recursive: true });
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: "Select Folder to Save Compressed PDFs",
+      properties: ["openDirectory", "createDirectory"],
+      buttonLabel: "Save Here",
+    });
+
+    if (canceled || !filePaths || filePaths.length === 0) {
+      return { success: false, message: "canceled" };
+    }
+
+    const selectedFolder = filePaths[0];
+    const savedPaths = [];
 
     // Save all files
-    for (const file of files) {
-      const filePath = path.join(folderPath, file.name);
-      const buffer = Buffer.from(file.base64Data, "base64");
-      await fs.promises.writeFile(filePath, buffer);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const suggestedName = normalizePdfFileName(
+        file?.name,
+        `compressed_${i + 1}.pdf`
+      );
+      const targetPath = ensureUniqueFilePath(
+        path.join(selectedFolder, suggestedName)
+      );
+      const buffer = payloadToBuffer(file);
+      await fs.promises.writeFile(targetPath, buffer);
+      savedPaths.push(targetPath);
     }
 
-    console.log(`✅ Saved ${files.length} compressed PDFs to: ${folderPath}`);
-    return { success: true, path: folderPath };
+    console.log(
+      `✅ Saved ${savedPaths.length} compressed PDFs to: ${selectedFolder}`
+    );
+    return { success: true, path: selectedFolder, files: savedPaths };
   } catch (err) {
     console.error("save-multiple-pdf-files error:", err);
     return { success: false, message: err.message || String(err) };
